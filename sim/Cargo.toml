@@ -1,0 +1,21 @@
+[package]
+name = "tbg_sim"
+version = "0.1.0"
+edition = "2021"
+description = "This Bitter Ground - Rust ECS Simulation Core"
+license = "MIT"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+bevy_ecs = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[example]]
+name = "basic_demo"
+path = "examples/basic_demo.rs"

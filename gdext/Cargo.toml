@@ -1,0 +1,19 @@
+[package]
+name = "tbg_gdext"
+version = "0.1.0"
+edition = "2021"
+description = "This Bitter Ground - GDExtension bindings for Godot 4"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Local simulation crate
+tbg_sim = { path = "../sim" }
+
+# Godot bindings
+godot = { git = "https://github.com/godot-rust/gdext", branch = "master" }
+
+[features]
+default = []

@@ -1,0 +1,19 @@
+[gd_scene load_steps=4 format=3 uid="uid://battlefield_scene"]
+
+[ext_resource type="Script" path="res://scripts/Battlefield.gd" id="1_battlefield"]
+[ext_resource type="Script" path="res://scripts/TerrainVisualizer.gd" id="2_terrain"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
+size = Vector2(400, 400)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
+albedo_color = Color(0.25, 0.35, 0.2, 1)
+roughness = 0.9
+
+[node name="Battlefield" type="Node3D"]
+script = ExtResource("1_battlefield")
+
+[node name="TerrainVisualizer" type="Node3D" parent="."]
+script = ExtResource("2_terrain")
+
+[node name="Squads" type="Node3D" parent="."]

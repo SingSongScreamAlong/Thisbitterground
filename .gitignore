@@ -1,0 +1,27 @@
+# Rust
+/sim/target/
+/gdext/target/
+**/*.rs.bk
+Cargo.lock
+
+# Godot
+.godot/
+*.import
+export.cfg
+export_presets.cfg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.a

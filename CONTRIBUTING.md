@@ -4,7 +4,7 @@ Thank you for your interest in contributing to This Bitter Ground!
 
 ## Project Structure
 
-```
+```plaintext
 ThisBitterGround-RustECS/
 ├── sim/           # Rust ECS simulation (Bevy ECS)
 ├── gdext/         # GDExtension bridge (godot-rust/gdext)

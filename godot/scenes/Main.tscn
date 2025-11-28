@@ -11,12 +11,38 @@ position = Vector2(640, 360)
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
 [node name="DebugPanel" type="PanelContainer" parent="CanvasLayer"]
-offset_right = 200.0
-offset_bottom = 100.0
+offset_right = 280.0
+offset_bottom = 50.0
 
 [node name="DebugLabel" type="Label" parent="CanvasLayer/DebugPanel"]
 layout_mode = 2
-text = "FPS: --
-Tick: --
-Time: --
-Squads: --"
+text = "FPS: -- | Tick: -- | Time: -- | Squads: --
+Zoom: 100%"
+
+[node name="SelectionPanel" type="PanelContainer" parent="CanvasLayer"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -220.0
+offset_bottom = 180.0
+grow_horizontal = 0
+
+[node name="SelectionLabel" type="Label" parent="CanvasLayer/SelectionPanel"]
+layout_mode = 2
+text = "No selection
+
+Click a squad to select
+Right-click to move"
+
+[node name="ControlsPanel" type="PanelContainer" parent="CanvasLayer"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -80.0
+offset_right = 400.0
+grow_vertical = 0
+
+[node name="ControlsLabel" type="Label" parent="CanvasLayer/ControlsPanel"]
+layout_mode = 2
+text = "WASD: Pan | Scroll: Zoom | LClick: Select | RClick: Move
+Shift+RClick: Attack-Move | H: Hold | R: Retreat | Esc: Deselect"

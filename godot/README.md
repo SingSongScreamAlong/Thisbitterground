@@ -43,6 +43,24 @@ The `.gdextension` file is already configured to look for the library at these r
      - Squads moving toward each other and fighting
      - Debug overlay showing FPS, tick count, and squad count
 
+## Controls
+
+### Camera
+| Input | Action |
+|-------|--------|
+| WASD / Arrow Keys | Pan camera |
+| Mouse Wheel | Zoom in/out |
+
+### Selection & Orders
+| Input | Action |
+|-------|--------|
+| Left Click | Select squad under cursor |
+| Right Click | Move selected squad to position |
+| Shift + Right Click | Attack-move to position |
+| H | Hold position |
+| R | Retreat |
+| Escape | Deselect |
+
 ## What You're Seeing
 
 The visualization shows:
@@ -51,9 +69,15 @@ The visualization shows:
 - **Red circles**: Red faction squads  
 - **Yellow circles**: Routing (fleeing) squads
 - **Gray circles**: Dead squads
+- **Green pulsing ring**: Selected squad
 - **Opacity**: Reflects current health (lower health = more transparent)
 
 The Rust simulation runs at 30 Hz internally. Godot calls `step(delta)` each frame, and the Rust side handles fixed-timestep accumulation.
+
+### UI Panels
+- **Top-left**: Debug info (FPS, tick, time, squad count, zoom)
+- **Top-right**: Selected squad info (ID, faction, status, health, morale, orders)
+- **Bottom-left**: Controls reference
 
 ## Project Structure
 

@@ -20,10 +20,12 @@ This document records the performance improvements made to the ThisBitterGround-
 
 ### After Optimization (Performance Pass)
 
+*Verified benchmark run: Nov 28, 2025*
+
 | Units | ms/tick | Effective FPS | Improvement |
 |-------|---------|---------------|-------------|
-| 1000  | ~12.7 ms | ~78 FPS      | **1.65x**   |
-| 2000  | ~20.4 ms | ~49 FPS      | **1.9x**    |
+| 1000  | **11.59 ms** | ~86 FPS  | **1.8x**    |
+| 2000  | **18.26 ms** | ~55 FPS  | **2.1x**    |
 
 ## Optimizations Implemented
 
@@ -127,4 +129,4 @@ cargo test --release
 
 ## Conclusion
 
-The performance optimization pass achieved a **1.65-1.9x improvement** in simulation throughput, enabling smooth gameplay with 2000+ units at 49+ FPS. The combination of LOD scheduling, spatial partitioning, and activity-based skipping provides a scalable foundation for large-scale battles.
+The performance optimization pass achieved a **1.8-2.1x improvement** in simulation throughput, enabling smooth gameplay with 2000+ units at 55+ FPS. The combination of LOD scheduling, spatial partitioning, and activity-based skipping provides a scalable foundation for large-scale battles.

@@ -30,9 +30,9 @@
 //! See `sim/src/godot_bridge.rs` for the authoritative format documentation.
 
 use godot::prelude::*;
-use godot::builtin::PackedFloat32Array;
+use godot::builtin::{PackedFloat32Array, Dictionary};
 use tbg_sim::SimWorld;
-use tbg_sim::godot_bridge::{snapshot_to_flatbuffer, SQUAD_STRIDE, HEADER_SIZE};
+use tbg_sim::godot_bridge::{snapshot_to_flatbuffer, BattleSummary, SQUAD_STRIDE, HEADER_SIZE};
 use tbg_sim::systems::{SimConfig, SimRate};
 
 /// Bridge class exposing the Rust simulation to Godot.
@@ -507,5 +507,142 @@ impl RustSimulation {
     #[func]
     fn get_squad_count(&mut self) -> i32 {
         self.sim.snapshot().squads.len() as i32
+    }
+
+    // ========================================================================
+    // BATTLE SUMMARY API
+    // ========================================================================
+
+    /// Get a complete battle summary as a Dictionary.
+    ///
+    /// Returns aggregate statistics about the battlefield state:
+    /// - `total_squads`: Total number of squads
+    /// - `blue_total`, `red_total`: Total per faction
+    /// - `blue_alive`, `red_alive`: Alive counts
+    /// - `blue_dead`, `red_dead`: Dead counts
+    /// - `blue_routing`, `red_routing`: Routing counts
+    /// - `blue_avg_morale`, `red_avg_morale`: Average morale (0.0-1.0)
+    /// - `blue_avg_suppression`, `red_avg_suppression`: Average suppression
+    /// - `blue_strength`, `red_strength`: Effective combat strength
+    #[func]
+    fn get_battle_summary(&mut self) -> Dictionary {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        let mut dict = Dictionary::new();
+        dict.set("total_squads", summary.total_squads as i32);
+        dict.set("blue_total", summary.blue_total as i32);
+        dict.set("red_total", summary.red_total as i32);
+        dict.set("blue_alive", summary.blue_alive as i32);
+        dict.set("red_alive", summary.red_alive as i32);
+        dict.set("blue_dead", summary.blue_dead as i32);
+        dict.set("red_dead", summary.red_dead as i32);
+        dict.set("blue_routing", summary.blue_routing as i32);
+        dict.set("red_routing", summary.red_routing as i32);
+        dict.set("blue_avg_morale", summary.blue_avg_morale as f64);
+        dict.set("red_avg_morale", summary.red_avg_morale as f64);
+        dict.set("blue_avg_suppression", summary.blue_avg_suppression as f64);
+        dict.set("red_avg_suppression", summary.red_avg_suppression as f64);
+        dict.set("blue_strength", summary.blue_strength as f64);
+        dict.set("red_strength", summary.red_strength as f64);
+        dict
+    }
+
+    // Individual getters for convenience (avoid Dictionary overhead)
+
+    /// Get number of alive Blue squads.
+    #[func]
+    fn get_blue_alive(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_alive as i32
+    }
+
+    /// Get number of alive Red squads.
+    #[func]
+    fn get_red_alive(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_alive as i32
+    }
+
+    /// Get number of dead Blue squads.
+    #[func]
+    fn get_blue_dead(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_dead as i32
+    }
+
+    /// Get number of dead Red squads.
+    #[func]
+    fn get_red_dead(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_dead as i32
+    }
+
+    /// Get number of routing Blue squads.
+    #[func]
+    fn get_blue_routing(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_routing as i32
+    }
+
+    /// Get number of routing Red squads.
+    #[func]
+    fn get_red_routing(&mut self) -> i32 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_routing as i32
+    }
+
+    /// Get average morale of alive Blue squads (0.0-1.0).
+    #[func]
+    fn get_blue_avg_morale(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_avg_morale as f64
+    }
+
+    /// Get average morale of alive Red squads (0.0-1.0).
+    #[func]
+    fn get_red_avg_morale(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_avg_morale as f64
+    }
+
+    /// Get average suppression of alive Blue squads (0.0-1.0).
+    #[func]
+    fn get_blue_avg_suppression(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_avg_suppression as f64
+    }
+
+    /// Get average suppression of alive Red squads (0.0-1.0).
+    #[func]
+    fn get_red_avg_suppression(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_avg_suppression as f64
+    }
+
+    /// Get effective strength of Blue faction.
+    #[func]
+    fn get_blue_strength(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.blue_strength as f64
+    }
+
+    /// Get effective strength of Red faction.
+    #[func]
+    fn get_red_strength(&mut self) -> f64 {
+        let snapshot = self.sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        summary.red_strength as f64
     }
 }

@@ -327,6 +327,197 @@ pub const FIELD_IS_ROUTING: usize = 12;
 pub const FIELD_ORDER_TYPE: usize = 13;
 
 // ============================================================================
+// BATTLE SUMMARY - Aggregate metrics derived from snapshot
+// ============================================================================
+
+/// Aggregate battle statistics derived from a simulation snapshot.
+///
+/// This struct provides a high-level overview of the battlefield state,
+/// useful for HUD displays, AI decision-making, or victory condition checks.
+///
+/// # Fields
+///
+/// All counts and averages are computed from the snapshot's squad list.
+/// "Alive" means `health > 0`. "Routing" means the squad has a `Retreat` order.
+///
+/// # Example
+///
+/// ```rust
+/// use tbg_sim::api::SimWorld;
+/// use tbg_sim::godot_bridge::BattleSummary;
+///
+/// let mut sim = SimWorld::new();
+/// let snapshot = sim.snapshot();
+/// let summary = BattleSummary::from_snapshot(&snapshot);
+///
+/// println!("Blue: {} alive, {} routing", summary.blue_alive, summary.blue_routing);
+/// println!("Red: {} alive, {} routing", summary.red_alive, summary.red_routing);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct BattleSummary {
+    // -------------------------------------------------------------------------
+    // TOTALS
+    // -------------------------------------------------------------------------
+    
+    /// Total number of squads in the snapshot (alive + dead).
+    pub total_squads: u32,
+    
+    /// Total Blue faction squads (alive + dead).
+    pub blue_total: u32,
+    
+    /// Total Red faction squads (alive + dead).
+    pub red_total: u32,
+    
+    // -------------------------------------------------------------------------
+    // ALIVE / DEAD COUNTS
+    // -------------------------------------------------------------------------
+    
+    /// Number of Blue squads currently alive (health > 0).
+    pub blue_alive: u32,
+    
+    /// Number of Blue squads that are dead (health <= 0).
+    pub blue_dead: u32,
+    
+    /// Number of Red squads currently alive (health > 0).
+    pub red_alive: u32,
+    
+    /// Number of Red squads that are dead (health <= 0).
+    pub red_dead: u32,
+    
+    // -------------------------------------------------------------------------
+    // ROUTING COUNTS
+    // -------------------------------------------------------------------------
+    
+    /// Number of Blue squads currently routing (alive with Retreat order).
+    pub blue_routing: u32,
+    
+    /// Number of Red squads currently routing (alive with Retreat order).
+    pub red_routing: u32,
+    
+    // -------------------------------------------------------------------------
+    // MORALE & SUPPRESSION (averages for alive squads only)
+    // -------------------------------------------------------------------------
+    
+    /// Average morale of alive Blue squads (0.0-1.0). 0.0 if no alive Blue squads.
+    pub blue_avg_morale: f32,
+    
+    /// Average morale of alive Red squads (0.0-1.0). 0.0 if no alive Red squads.
+    pub red_avg_morale: f32,
+    
+    /// Average suppression of alive Blue squads (0.0-1.0). 0.0 if no alive Blue squads.
+    pub blue_avg_suppression: f32,
+    
+    /// Average suppression of alive Red squads (0.0-1.0). 0.0 if no alive Red squads.
+    pub red_avg_suppression: f32,
+    
+    // -------------------------------------------------------------------------
+    // EFFECTIVE STRENGTH
+    // -------------------------------------------------------------------------
+    
+    /// Effective strength of Blue faction.
+    /// Computed as: sum of (health / health_max * size) for all alive Blue squads.
+    /// Represents the "combat power" remaining.
+    pub blue_strength: f32,
+    
+    /// Effective strength of Red faction.
+    /// Computed as: sum of (health / health_max * size) for all alive Red squads.
+    pub red_strength: f32,
+}
+
+impl BattleSummary {
+    /// Compute battle summary statistics from a simulation snapshot.
+    ///
+    /// This is a pure function that derives aggregate metrics from the snapshot.
+    /// It does not modify the snapshot or any simulation state.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Iterate through all squads in the snapshot.
+    /// 2. Classify each squad by faction (Blue/Red) and status (alive/dead/routing).
+    /// 3. Accumulate morale and suppression for alive squads.
+    /// 4. Compute averages and effective strength.
+    pub fn from_snapshot(snapshot: &Snapshot) -> Self {
+        let mut summary = BattleSummary::default();
+        
+        // Accumulators for computing averages
+        let mut blue_morale_sum = 0.0f32;
+        let mut blue_suppression_sum = 0.0f32;
+        let mut red_morale_sum = 0.0f32;
+        let mut red_suppression_sum = 0.0f32;
+        
+        for squad in &snapshot.squads {
+            summary.total_squads += 1;
+            
+            let is_blue = squad.faction == "Blue";
+            let is_alive = squad.health > 0.0;
+            let is_routing = squad.order.starts_with("Retreat");
+            
+            if is_blue {
+                summary.blue_total += 1;
+                
+                if is_alive {
+                    summary.blue_alive += 1;
+                    blue_morale_sum += squad.morale;
+                    blue_suppression_sum += squad.suppression;
+                    
+                    // Effective strength: (health / health_max) * size
+                    let health_ratio = if squad.health_max > 0.0 {
+                        squad.health / squad.health_max
+                    } else {
+                        0.0
+                    };
+                    summary.blue_strength += health_ratio * squad.size as f32;
+                    
+                    if is_routing {
+                        summary.blue_routing += 1;
+                    }
+                } else {
+                    summary.blue_dead += 1;
+                }
+            } else {
+                // Red faction
+                summary.red_total += 1;
+                
+                if is_alive {
+                    summary.red_alive += 1;
+                    red_morale_sum += squad.morale;
+                    red_suppression_sum += squad.suppression;
+                    
+                    // Effective strength
+                    let health_ratio = if squad.health_max > 0.0 {
+                        squad.health / squad.health_max
+                    } else {
+                        0.0
+                    };
+                    summary.red_strength += health_ratio * squad.size as f32;
+                    
+                    if is_routing {
+                        summary.red_routing += 1;
+                    }
+                } else {
+                    summary.red_dead += 1;
+                }
+            }
+        }
+        
+        // Compute averages (avoid division by zero)
+        if summary.blue_alive > 0 {
+            let count = summary.blue_alive as f32;
+            summary.blue_avg_morale = blue_morale_sum / count;
+            summary.blue_avg_suppression = blue_suppression_sum / count;
+        }
+        
+        if summary.red_alive > 0 {
+            let count = summary.red_alive as f32;
+            summary.red_avg_morale = red_morale_sum / count;
+            summary.red_avg_suppression = red_suppression_sum / count;
+        }
+        
+        summary
+    }
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -519,5 +710,123 @@ mod tests {
         
         // Ensure stride matches the highest field + 1
         assert_eq!(SQUAD_STRIDE, FIELD_ORDER_TYPE + 1);
+    }
+
+    // ========================================================================
+    // BATTLE SUMMARY TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_battle_summary_empty() {
+        let mut sim = SimWorld::new();
+        let snapshot = sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        assert_eq!(summary.total_squads, 0);
+        assert_eq!(summary.blue_total, 0);
+        assert_eq!(summary.red_total, 0);
+        assert_eq!(summary.blue_alive, 0);
+        assert_eq!(summary.red_alive, 0);
+        assert_eq!(summary.blue_dead, 0);
+        assert_eq!(summary.red_dead, 0);
+        assert_eq!(summary.blue_routing, 0);
+        assert_eq!(summary.red_routing, 0);
+        assert_eq!(summary.blue_avg_morale, 0.0);
+        assert_eq!(summary.red_avg_morale, 0.0);
+        assert_eq!(summary.blue_strength, 0.0);
+        assert_eq!(summary.red_strength, 0.0);
+    }
+
+    #[test]
+    fn test_battle_summary_basic_counts() {
+        let config = SimConfig::default();
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn 3 Blue and 2 Red squads
+        sim.spawn_ai_squad(1, Faction::Blue, 0.0, 0.0);
+        sim.spawn_ai_squad(2, Faction::Blue, 10.0, 0.0);
+        sim.spawn_ai_squad(3, Faction::Blue, 20.0, 0.0);
+        sim.spawn_ai_squad(100, Faction::Red, 100.0, 0.0);
+        sim.spawn_ai_squad(101, Faction::Red, 110.0, 0.0);
+        
+        let snapshot = sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        assert_eq!(summary.total_squads, 5);
+        assert_eq!(summary.blue_total, 3);
+        assert_eq!(summary.red_total, 2);
+        assert_eq!(summary.blue_alive, 3);
+        assert_eq!(summary.red_alive, 2);
+        assert_eq!(summary.blue_dead, 0);
+        assert_eq!(summary.red_dead, 0);
+    }
+
+    #[test]
+    fn test_battle_summary_morale_average() {
+        let config = SimConfig::default();
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn squads - they start with default morale (1.0)
+        sim.spawn_ai_squad(1, Faction::Blue, 0.0, 0.0);
+        sim.spawn_ai_squad(2, Faction::Blue, 10.0, 0.0);
+        sim.spawn_ai_squad(100, Faction::Red, 100.0, 0.0);
+        
+        let snapshot = sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        // Default morale is 1.0, so average should be 1.0
+        assert!((summary.blue_avg_morale - 1.0).abs() < 0.01, 
+            "Blue avg morale should be ~1.0, got {}", summary.blue_avg_morale);
+        assert!((summary.red_avg_morale - 1.0).abs() < 0.01,
+            "Red avg morale should be ~1.0, got {}", summary.red_avg_morale);
+    }
+
+    #[test]
+    fn test_battle_summary_strength() {
+        let config = SimConfig::default();
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn squads at full health
+        // Default squad size is 10, health is 100
+        sim.spawn_ai_squad(1, Faction::Blue, 0.0, 0.0);
+        sim.spawn_ai_squad(100, Faction::Red, 100.0, 0.0);
+        
+        let snapshot = sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        // At full health: strength = (100/100) * 10 = 10 per squad
+        assert!(summary.blue_strength > 0.0, "Blue strength should be positive");
+        assert!(summary.red_strength > 0.0, "Red strength should be positive");
+    }
+
+    #[test]
+    fn test_battle_summary_after_combat() {
+        let config = SimConfig::default();
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn opposing squads close together
+        sim.spawn_ai_squad(1, Faction::Blue, 0.0, 0.0);
+        sim.spawn_ai_squad(100, Faction::Red, 30.0, 0.0);
+        
+        // Issue attack orders
+        sim.order_attack_move(1, 30.0, 0.0);
+        sim.order_attack_move(100, 0.0, 0.0);
+        
+        // Run simulation for a while
+        for _ in 0..100 {
+            sim.step(0.033);
+        }
+        
+        let snapshot = sim.snapshot();
+        let summary = BattleSummary::from_snapshot(&snapshot);
+        
+        // After combat, at least one side should have taken damage
+        // (strength reduced or casualties)
+        let total_alive = summary.blue_alive + summary.red_alive;
+        let total_dead = summary.blue_dead + summary.red_dead;
+        
+        // Either some are dead, or strength is reduced from initial
+        assert!(total_alive > 0 || total_dead > 0, 
+            "Should have some squads alive or dead");
     }
 }

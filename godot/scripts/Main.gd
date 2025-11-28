@@ -46,6 +46,13 @@ extends Node2D
 ##   H                 - Hold position
 ##   R                 - Retreat
 ##
+## Time Controls:
+##   Space             - Pause/Unpause simulation
+##   1                 - Set speed to 0.25x (slow motion)
+##   2                 - Set speed to 1x (normal)
+##   3                 - Set speed to 2x (fast)
+##   4                 - Set speed to 4x (very fast)
+##
 ## =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -117,6 +124,7 @@ const ORDER_NAMES := ["Hold", "MoveTo", "AttackMove", "Retreat"]
 @onready var camera: Camera2D = $Camera2D
 @onready var debug_label: Label = $CanvasLayer/DebugPanel/DebugLabel
 @onready var selection_label: Label = $CanvasLayer/SelectionPanel/SelectionLabel
+@onready var battle_label: Label = $CanvasLayer/BattlePanel/BattleLabel
 
 # -----------------------------------------------------------------------------
 # STATE - SIMULATION
@@ -153,6 +161,23 @@ var selection_ring: Node2D = null
 
 ## Current camera zoom level
 var camera_zoom: float = 1.0
+
+# -----------------------------------------------------------------------------
+# STATE - TIME CONTROL
+# -----------------------------------------------------------------------------
+# Time controls allow pausing and adjusting simulation speed.
+# Space toggles pause, number keys 1-4 set speed multipliers.
+# When paused, sim.step() is not called.
+# When running, sim.step(delta * time_scale) is called.
+
+## Whether the simulation is paused
+var is_paused: bool = false
+
+## Time scale multiplier (0.25x, 1x, 2x, 4x)
+var time_scale: float = 1.0
+
+## Available time scale presets (mapped to keys 1-4)
+const TIME_SCALES := [0.25, 1.0, 2.0, 4.0]
 
 # -----------------------------------------------------------------------------
 # LIFECYCLE
@@ -203,11 +228,14 @@ func _process(delta: float) -> void:
 	if sim == null:
 		return
 	
-	# Handle camera controls
+	# Handle camera controls (always active, even when paused)
 	_handle_camera_input(delta)
 	
-	# Step the Rust simulation
-	sim.step(delta)
+	# Step the Rust simulation (respects pause and time scale)
+	# When paused, we don't call step() at all.
+	# When running, we multiply delta by time_scale for speed control.
+	if not is_paused:
+		sim.step(delta * time_scale)
 	
 	# Get the snapshot buffer and update visuals
 	var buffer: PackedFloat32Array = sim.get_snapshot_buffer()
@@ -215,6 +243,7 @@ func _process(delta: float) -> void:
 		var squad_count := int(buffer[0])
 		_update_squads_from_buffer(buffer, squad_count)
 		_update_debug_label(squad_count)
+		_update_battle_hud()
 	
 	# Update selection visuals
 	_update_selection_visuals()
@@ -297,10 +326,44 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 
 
 func _handle_keyboard_orders(event: InputEventKey) -> void:
-	## Handle keyboard shortcuts for orders.
+	## Handle keyboard shortcuts for orders and time controls.
 	
+	# Time controls (always active, even without selection)
+	match event.keycode:
+		KEY_SPACE:
+			# Toggle pause
+			is_paused = not is_paused
+			print("[Time] %s" % ("PAUSED" if is_paused else "RUNNING"))
+			return
+		KEY_1:
+			# Slow motion (0.25x)
+			time_scale = TIME_SCALES[0]
+			print("[Time] Speed: 0.25x")
+			return
+		KEY_2:
+			# Normal speed (1x)
+			time_scale = TIME_SCALES[1]
+			print("[Time] Speed: 1x")
+			return
+		KEY_3:
+			# Fast (2x)
+			time_scale = TIME_SCALES[2]
+			print("[Time] Speed: 2x")
+			return
+		KEY_4:
+			# Very fast (4x)
+			time_scale = TIME_SCALES[3]
+			print("[Time] Speed: 4x")
+			return
+		KEY_ESCAPE:
+			# Deselect (no squad needed)
+			selected_squad_id = -1
+			print("[Selection] Deselected")
+			return
+	
+	# Order commands require a selected squad
 	if selected_squad_id < 0:
-		return  # No squad selected
+		return
 	
 	match event.keycode:
 		KEY_H:
@@ -311,10 +374,6 @@ func _handle_keyboard_orders(event: InputEventKey) -> void:
 			# Retreat
 			sim.issue_retreat_order(selected_squad_id)
 			print("[Order] Squad %d: Retreat" % selected_squad_id)
-		KEY_ESCAPE:
-			# Deselect
-			selected_squad_id = -1
-			print("[Selection] Deselected")
 
 
 # -----------------------------------------------------------------------------
@@ -491,6 +550,13 @@ func _update_squads_from_buffer(buffer: PackedFloat32Array, squad_count: int) ->
 
 func _get_squad_color(data: Dictionary) -> Color:
 	## Determine the color for a squad based on its state.
+	## 
+	## Visual feedback for battlefield awareness:
+	## - Dead squads: Gray, semi-transparent
+	## - Routing squads: Yellow/orange (fleeing)
+	## - Alive squads: Blue or Red based on faction
+	## - Alpha modulated by health (lower health = more transparent)
+	## - Saturation reduced by low morale or high suppression
 	
 	var color: Color
 	
@@ -503,9 +569,27 @@ func _get_squad_color(data: Dictionary) -> Color:
 	else:
 		color = COLOR_RED
 	
-	# Modulate alpha based on health
+	# Modulate alpha based on health (50% to 100%)
 	var health_ratio: float = data["health"] / max(data["health_max"], 1.0)
 	color.a = 0.5 + 0.5 * health_ratio
+	
+	# Desaturate based on morale and suppression
+	# Low morale or high suppression makes the unit look "stressed"
+	# morale: 1.0 = full color, 0.0 = desaturated
+	# suppression: 0.0 = full color, 1.0 = desaturated
+	if data["is_alive"] and not data["is_routing"]:
+		var morale: float = data["morale"]
+		var suppression: float = data["suppression"]
+		
+		# Combined stress factor: lower morale and higher suppression = more stress
+		# stress_factor: 0.0 = no stress (full color), 1.0 = max stress (desaturated)
+		var stress_factor := clampf((1.0 - morale) * 0.5 + suppression * 0.5, 0.0, 0.8)
+		
+		# Desaturate by lerping toward gray
+		var gray := (color.r + color.g + color.b) / 3.0
+		color.r = lerpf(color.r, gray, stress_factor)
+		color.g = lerpf(color.g, gray, stress_factor)
+		color.b = lerpf(color.b, gray, stress_factor)
 	
 	return color
 
@@ -570,13 +654,64 @@ func _update_selection_visuals() -> void:
 # -----------------------------------------------------------------------------
 
 func _update_debug_label(squad_count: int) -> void:
-	## Update the debug overlay with simulation stats.
+	## Update the debug overlay with simulation stats and time control status.
 	var tick := sim.get_tick()
 	var sim_time := sim.get_time()
 	var fps := Engine.get_frames_per_second()
 	
-	debug_label.text = "FPS: %d | Tick: %d | Time: %.1fs | Squads: %d\nZoom: %.0f%%" % [
-		fps, tick, sim_time, squad_count, camera_zoom * 100
+	# Format time control status
+	var time_status: String
+	if is_paused:
+		time_status = "PAUSED"
+	else:
+		time_status = "%.2fx" % time_scale
+	
+	debug_label.text = "FPS: %d | Tick: %d | Time: %.1fs | Squads: %d\nZoom: %.0f%% | Speed: %s | [Space] Pause | [1-4] Speed" % [
+		fps, tick, sim_time, squad_count, camera_zoom * 100, time_status
+	]
+
+
+func _update_battle_hud() -> void:
+	## Update the battle overview HUD with aggregate statistics.
+	## Uses the BattleSummary from Rust via get_battle_summary().
+	
+	var summary: Dictionary = sim.get_battle_summary()
+	
+	# Extract values from the summary dictionary
+	var blue_alive: int = summary.get("blue_alive", 0)
+	var blue_dead: int = summary.get("blue_dead", 0)
+	var blue_routing: int = summary.get("blue_routing", 0)
+	var blue_morale: float = summary.get("blue_avg_morale", 0.0) * 100
+	var blue_supp: float = summary.get("blue_avg_suppression", 0.0) * 100
+	var blue_strength: float = summary.get("blue_strength", 0.0)
+	
+	var red_alive: int = summary.get("red_alive", 0)
+	var red_dead: int = summary.get("red_dead", 0)
+	var red_routing: int = summary.get("red_routing", 0)
+	var red_morale: float = summary.get("red_avg_morale", 0.0) * 100
+	var red_supp: float = summary.get("red_avg_suppression", 0.0) * 100
+	var red_strength: float = summary.get("red_strength", 0.0)
+	
+	var total: int = summary.get("total_squads", 0)
+	
+	# Format the battle HUD text
+	battle_label.text = """=== BATTLE OVERVIEW ===
+Total Squads: %d
+
+BLUE FORCE
+  Alive: %d | Dead: %d | Routing: %d
+  Morale: %.0f%% | Suppression: %.0f%%
+  Strength: %.1f
+
+RED FORCE
+  Alive: %d | Dead: %d | Routing: %d
+  Morale: %.0f%% | Suppression: %.0f%%
+  Strength: %.1f""" % [
+		total,
+		blue_alive, blue_dead, blue_routing,
+		blue_morale, blue_supp, blue_strength,
+		red_alive, red_dead, red_routing,
+		red_morale, red_supp, red_strength,
 	]
 
 

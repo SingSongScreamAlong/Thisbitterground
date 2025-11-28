@@ -5,6 +5,12 @@
 //! - Activity flag updates for skipping idle units
 //! - Sector assignment for batched combat
 //!
+//! ## Simulation Rates
+//!
+//! - **30 Hz (Normal)**: The intended production simulation rate. Recommended for up to ~3000 units.
+//! - **20 Hz (Performance)**: Reserved for large-scale stress scenarios or "performance mode".
+//!   Suitable for up to ~5000 units.
+//!
 //! ## Parallelism Notes
 //! - `lod_assignment_system`: Read-only Position, writes SimLod. Can run in parallel with other read-only systems.
 //! - `activity_flags_system`: Reads Velocity/Suppression, writes ActivityFlags. Can run in parallel with non-overlapping systems.
@@ -13,10 +19,109 @@
 use crate::components::*;
 use bevy_ecs::prelude::*;
 
+// ============================================================================
+// SIMULATION RATE
+// ============================================================================
+
+/// Simulation rate presets.
+///
+/// - `Normal30Hz`: The intended production rate (30 Hz, ~33.3ms per tick).
+///   Recommended for up to ~3000 units.
+/// - `Performance20Hz`: Performance mode for large-scale scenarios (20 Hz, 50ms per tick).
+///   Suitable for up to ~5000 units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimRate {
+    /// 30 Hz - Production rate, recommended for up to ~3000 units.
+    Normal30Hz,
+    /// 20 Hz - Performance mode, suitable for up to ~5000 units.
+    Performance20Hz,
+}
+
+impl SimRate {
+    /// Get the fixed timestep in seconds for this rate.
+    pub fn timestep(&self) -> f32 {
+        match self {
+            SimRate::Normal30Hz => 1.0 / 30.0,
+            SimRate::Performance20Hz => 1.0 / 20.0,
+        }
+    }
+
+    /// Get the tick budget in milliseconds for this rate.
+    pub fn budget_ms(&self) -> f32 {
+        match self {
+            SimRate::Normal30Hz => 33.33,
+            SimRate::Performance20Hz => 50.0,
+        }
+    }
+}
+
+impl Default for SimRate {
+    fn default() -> Self {
+        SimRate::Normal30Hz
+    }
+}
+
+// ============================================================================
+// SIMULATION LIMITS
+// ============================================================================
+
+/// Soft limits for unit counts at different simulation rates.
+///
+/// These are design recommendations, not hard caps. Exceeding these limits
+/// will emit a warning but spawning will still proceed.
+#[derive(Debug, Clone, Copy)]
+pub struct SimLimits {
+    /// Maximum recommended units at 30 Hz (Normal mode).
+    pub max_units_normal: usize,
+    /// Maximum recommended units at 20 Hz (Performance mode).
+    pub max_units_heavy: usize,
+}
+
+impl Default for SimLimits {
+    fn default() -> Self {
+        Self {
+            max_units_normal: 3000,
+            max_units_heavy: 5000,
+        }
+    }
+}
+
+impl SimLimits {
+    /// Check if the unit count exceeds the limit for the given rate.
+    /// Returns the recommended limit if exceeded, None otherwise.
+    pub fn check_limit(&self, count: usize, rate: SimRate) -> Option<usize> {
+        let limit = match rate {
+            SimRate::Normal30Hz => self.max_units_normal,
+            SimRate::Performance20Hz => self.max_units_heavy,
+        };
+        if count > limit {
+            Some(limit)
+        } else {
+            None
+        }
+    }
+}
+
+// ============================================================================
+// SIMULATION CONFIG
+// ============================================================================
+
 /// Configuration for simulation performance tuning.
+///
+/// ## Default Rate
+///
+/// The default fixed timestep is **30 Hz** (`1.0 / 30.0`), which is the intended
+/// production simulation frequency. This rate is recommended for up to ~3000 units.
+///
+/// For large-scale stress scenarios or "performance mode", use 20 Hz via
+/// `SimConfig::with_rate(SimRate::Performance20Hz)`. This is suitable for up to ~5000 units.
+///
+/// Stress tests intentionally override the timestep to 20 Hz and should not be changed.
 #[derive(Resource, Debug, Clone)]
 pub struct SimConfig {
-    /// Fixed timestep in seconds (e.g., 1/30 = 0.0333 for 30 Hz).
+    /// Fixed timestep in seconds.
+    /// Default: 1/30 (30 Hz) for production.
+    /// Use `SimConfig::with_rate()` to set this based on `SimRate`.
     pub fixed_timestep: f32,
     /// Size of combat sectors in world units.
     pub sector_size: f32,
@@ -28,17 +133,52 @@ pub struct SimConfig {
     pub damage_memory_ticks: u64,
     /// Reference point for LOD calculations (e.g., camera position or frontline).
     pub lod_reference_point: (f32, f32),
+    /// Soft limits for unit counts.
+    pub limits: SimLimits,
 }
 
 impl Default for SimConfig {
+    /// Creates a SimConfig with 30 Hz (Normal) rate.
+    /// This is the intended production configuration.
     fn default() -> Self {
         Self {
-            fixed_timestep: 1.0 / 30.0, // 30 Hz
+            fixed_timestep: SimRate::Normal30Hz.timestep(), // 30 Hz - production rate
             sector_size: 40.0,           // 40 unit sectors
             lod_high_distance: 100.0,    // Full fidelity within 100 units
             lod_medium_distance: 200.0,  // Medium fidelity within 200 units
             damage_memory_ticks: 60,     // ~2 seconds at 30 Hz
             lod_reference_point: (0.0, 0.0), // Center of battlefield
+            limits: SimLimits::default(),
+        }
+    }
+}
+
+impl SimConfig {
+    /// Create a SimConfig with the specified simulation rate.
+    ///
+    /// # Example
+    /// ```
+    /// use tbg_sim::systems::performance::{SimConfig, SimRate};
+    ///
+    /// // Production config (30 Hz)
+    /// let normal = SimConfig::with_rate(SimRate::Normal30Hz);
+    ///
+    /// // Performance mode (20 Hz)
+    /// let heavy = SimConfig::with_rate(SimRate::Performance20Hz);
+    /// ```
+    pub fn with_rate(rate: SimRate) -> Self {
+        Self {
+            fixed_timestep: rate.timestep(),
+            ..Default::default()
+        }
+    }
+
+    /// Get the current simulation rate based on the fixed timestep.
+    pub fn rate(&self) -> SimRate {
+        if self.fixed_timestep <= 1.0 / 25.0 {
+            SimRate::Normal30Hz
+        } else {
+            SimRate::Performance20Hz
         }
     }
 }

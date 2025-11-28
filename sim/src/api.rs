@@ -528,7 +528,16 @@ impl SimWorld {
     }
 
     /// Spawn multiple AI squads in a formation.
+    /// 
     /// Returns the number of squads spawned.
+    /// 
+    /// ## Soft Limits
+    /// 
+    /// If the total unit count (existing + new) exceeds the recommended limit
+    /// for the current simulation rate, a warning is emitted but spawning proceeds.
+    /// See `SimLimits` for the default limits:
+    /// - 30 Hz (Normal): ~3000 units
+    /// - 20 Hz (Performance): ~5000 units
     pub fn spawn_mass_squads(
         &mut self,
         faction: Faction,
@@ -538,6 +547,23 @@ impl SimWorld {
         spread: f32,
         start_id: u32,
     ) -> usize {
+        // Check soft limits and warn if exceeded
+        // Clone config to avoid borrow conflicts
+        let config_opt = self.world.get_resource::<SimConfig>().cloned();
+        if let Some(config) = config_opt {
+            let current_count = self.world.query::<&SquadId>().iter(&self.world).count();
+            let total_after = current_count + count;
+            let rate = config.rate();
+            
+            if let Some(limit) = config.limits.check_limit(total_after, rate) {
+                eprintln!(
+                    "[SimWorld] Warning: Spawning {} units (total: {}) exceeds recommended limit of {} for {:?}. \
+                     Performance may degrade.",
+                    count, total_after, limit, rate
+                );
+            }
+        }
+        
         let cols = (count as f32).sqrt().ceil() as usize;
         let spacing = spread / cols as f32;
 

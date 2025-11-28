@@ -218,6 +218,67 @@ cargo test test_stress --release -- --nocapture
 cargo test --release
 ```
 
+---
+
+## Simulation Rates & Unit Caps
+
+### Finalized Design Targets
+
+| Rate | Timestep | Budget | Recommended Units | Use Case |
+|------|----------|--------|-------------------|----------|
+| **30 Hz (Normal)** | 33.3 ms | ~33 ms | Up to ~3000 | Production gameplay |
+| **20 Hz (Performance)** | 50.0 ms | ~50 ms | Up to ~5000 | Large-scale scenarios |
+
+### Configuration
+
+```rust
+use tbg_sim::{SimConfig, SimRate};
+
+// Production config (30 Hz) - DEFAULT
+let config = SimConfig::default();
+
+// Or explicitly:
+let config = SimConfig::with_rate(SimRate::Normal30Hz);
+
+// Performance mode (20 Hz)
+let config = SimConfig::with_rate(SimRate::Performance20Hz);
+```
+
+### Soft Limits (SimLimits)
+
+The simulation enforces **soft limits** on unit counts:
+
+| Rate | Limit | Behavior |
+|------|-------|----------|
+| 30 Hz | 3000 units | Warning emitted if exceeded |
+| 20 Hz | 5000 units | Warning emitted if exceeded |
+
+Exceeding limits does not block spawning—it emits a warning to inform the developer that performance may degrade.
+
+### Execution Model
+
+- **Sequential mode** is the default execution model
+- The optional `parallel` feature (`--features parallel`) enables rayon-based internal parallelism
+- Parallel mode may behave differently depending on hardware (overhead vs. benefit tradeoff)
+- On Apple Silicon, sequential mode is faster at 1000-5000 units due to fast single-core performance
+
+### Stress Test Configuration
+
+Stress tests intentionally use **20 Hz** to allow testing larger unit counts within time budgets. This is by design and should not be changed.
+
+### Final Timing Table (Performance Pass 2)
+
+| Units | Sequential (ms/tick) | Parallel (ms/tick) | 20 Hz Budget | 30 Hz Budget |
+|-------|---------------------|-------------------|--------------|--------------|
+| 1000  | 13.45 | 14.39 | ✅ 36.5ms headroom | ✅ 19.5ms headroom |
+| 2000  | 20.98 | 23.28 | ✅ 29.0ms headroom | ✅ 12.0ms headroom |
+| 3000  | 29.52 | 31.82 | ✅ 20.5ms headroom | ✅ 3.5ms headroom |
+| 5000  | 45.52 | 48.10 | ✅ 4.5ms headroom | ❌ 12.5ms over |
+
+---
+
 ## Conclusion
 
 The performance optimization pass achieved a **1.8-2.1x improvement** in simulation throughput, enabling smooth gameplay with 2000+ units at 55+ FPS. The combination of LOD scheduling, spatial partitioning, and activity-based skipping provides a scalable foundation for large-scale battles.
+
+The finalized configuration targets **30 Hz for production** (up to 3000 units) and **20 Hz for performance mode** (up to 5000 units), with soft limits to warn developers when exceeding recommended thresholds.

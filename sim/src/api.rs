@@ -63,71 +63,91 @@ impl SimWorld {
         world.insert_resource(SimTick(0));
         world.insert_resource(config);
         world.insert_resource(SectorCombatData::default());
+        world.insert_resource(PendingCombatResults::default());
 
         // Build schedule with parallel system groups
         // See sim/src/systems/mod.rs for detailed data access documentation
+        //
+        // PARALLELIZATION STRATEGY:
+        // - Systems within the same group can run in parallel if they don't conflict
+        // - Bevy's scheduler automatically parallelizes non-conflicting systems
+        // - We use .after() to establish dependencies between groups
         let mut schedule = Schedule::default();
         
         // =========================================================================
-        // GROUP 1: Spatial/LOD (Run First)
+        // GROUP 1: Spatial/LOD (Run First) - PARALLEL
         // =========================================================================
         // These update spatial data structures used by later systems.
-        // PARALLEL POTENTIAL: HIGH - No conflicting writes between systems.
-        // - spatial_grid_update_system: writes SpatialGrid
-        // - lod_assignment_system: writes SimLod
-        // - sector_assignment_system: writes SectorId  
-        // - activity_flags_system: writes ActivityFlags
+        // All write to different resources/components, so they run in PARALLEL.
         schedule.add_systems((
-            spatial_grid_update_system,
-            lod_assignment_system,
-            sector_assignment_system,
-            activity_flags_system,
+            spatial_grid_update_system,  // writes: SpatialGrid (resource)
+            lod_assignment_system,       // writes: SimLod (component)
+            sector_assignment_system,    // writes: SectorId (component)
+            activity_flags_system,       // writes: ActivityFlags (component)
         ));
         
         // =========================================================================
-        // GROUP 2: AI Awareness (After Group 1)
+        // GROUP 2: AI Awareness (After Group 1) - PARALLEL
         // =========================================================================
         // These detect threats and nearby friendlies using the spatial grid.
-        // PARALLEL POTENTIAL: MEDIUM - behavior_state depends on threat_awareness
-        // - threat_awareness_system: writes ThreatAwareness
-        // - nearby_friendlies_system: writes NearbyFriendlies
-        // - behavior_state_system: writes BehaviorState (depends on ThreatAwareness)
+        // threat_awareness and nearby_friendlies write to DIFFERENT components,
+        // so they can run in PARALLEL with each other.
+        // behavior_state reads ThreatAwareness, so it must run after threat_awareness.
         schedule.add_systems((
-            threat_awareness_system,
-            nearby_friendlies_system,
-            behavior_state_system,
+            threat_awareness_system,     // writes: ThreatAwareness
+            nearby_friendlies_system,    // writes: NearbyFriendlies
         ).after(spatial_grid_update_system));
         
+        schedule.add_systems(
+            behavior_state_system        // writes: BehaviorState, reads: ThreatAwareness
+                .after(threat_awareness_system)
+                .after(spatial_grid_update_system)
+        );
+        
         // =========================================================================
-        // GROUP 3: AI Decisions (After Group 2)
+        // GROUP 3: AI Decisions (After Group 2) - PARALLEL
         // =========================================================================
         // Generate movement decisions based on AI state.
-        // PARALLEL POTENTIAL: HIGH - Different write targets (Order vs Velocity)
+        // ai_order writes Order, flocking writes Velocity - PARALLEL safe.
         schedule.add_systems((
-            ai_order_system,
-            flocking_system,
+            ai_order_system,             // writes: Order
+            flocking_system,             // writes: Velocity
         ).after(behavior_state_system));
         
         // =========================================================================
-        // GROUP 4: Core Simulation (After Group 3)
+        // GROUP 4: Core Simulation (After Group 3) - SPLIT COMBAT
         // =========================================================================
-        // Main game logic. Chained for correctness.
-        // PARALLEL POTENTIAL: LOW - Sequential dependencies
-        // OPTIMIZATION TARGET: combat_system is heaviest, consider par_iter
+        // Combat is split into gather (parallelizable) and apply (sequential) phases.
+        // Other systems remain chained for correctness.
         schedule.add_systems((
             order_system,
             movement_system,
-            combat_system,        // HEAVIEST SYSTEM - target for par_iter optimization
+        ).chain().after(flocking_system));
+        
+        // Combat gather phase - reads entities, writes to PendingCombatResults resource
+        // Can run in parallel with other read-only systems
+        schedule.add_systems(
+            combat_gather_system
+                .after(movement_system)
+        );
+        
+        // Combat apply phase - applies pending damage, must be sequential
+        schedule.add_systems(
+            combat_apply_system
+                .after(combat_gather_system)
+        );
+        
+        // Post-combat systems
+        schedule.add_systems((
             suppression_decay_system,
             morale_system,
             rout_system,
-        ).chain().after(flocking_system));
+        ).chain().after(combat_apply_system));
         
         // =========================================================================
-        // GROUP 5: Environment (After Group 4)
+        // GROUP 5: Environment (After Group 4) - PARALLEL
         // =========================================================================
-        // Terrain and destructible updates.
-        // PARALLEL POTENTIAL: HIGH - Different entity types
+        // Terrain and destructible updates operate on different entity types.
         schedule.add_systems((
             terrain_damage_to_destructibles_system,
             destruction_state_system,

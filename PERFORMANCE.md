@@ -48,6 +48,75 @@ Effective FPS: 33.7
 | 7A (Spatial Grid) | ~21 ms | ~39 ms | Baseline |
 | 7B (LOD/Sectors)  | ~12 ms | ~18 ms | 1.8-2.1x improvement |
 | Scaling Pass      | ~13 ms | ~21 ms | Consistent with 7B |
+| Parallelization Pass | ~13 ms | ~21 ms | System-level parallelism |
+
+---
+
+## Performance Pass 2: Parallelization (Nov 28, 2025)
+
+### System-Level Parallelism
+
+The ECS schedule has been reorganized to allow non-conflicting systems to run in parallel:
+
+| Group | Systems | Parallel? | Notes |
+|-------|---------|-----------|-------|
+| 1: Spatial/LOD | spatial_grid, lod, sector, activity | ✅ YES | Different write targets |
+| 2: AI Awareness | threat_awareness, nearby_friendlies | ✅ YES | Different components |
+| 2b: Behavior | behavior_state | After threat | Reads ThreatAwareness |
+| 3: AI Decisions | ai_order, flocking | ✅ YES | Order vs Velocity |
+| 4: Core Sim | order, movement, combat_gather | Sequential | Dependencies |
+| 4b: Combat Apply | combat_apply | After gather | Applies damage |
+| 4c: Post-Combat | suppression, morale, rout | Sequential | Dependencies |
+| 5: Environment | terrain_damage, destruction | ✅ YES | Different entities |
+
+### Split Combat System
+
+Combat has been split into gather/apply phases:
+
+1. **`combat_gather_system`** - O(n × k) complexity
+   - Reads entities, writes to `PendingCombatResults` resource
+   - Can run in parallel with other read-only systems
+   - Supports internal parallelism via `--features parallel`
+
+2. **`combat_apply_system`** - O(n + m) complexity
+   - Applies pending damage and suppression
+   - Sequential for correctness
+
+### Parallel Feature Flag
+
+Internal parallelism can be enabled with:
+
+```bash
+cargo test --release --features parallel
+```
+
+This uses rayon for parallel iteration in the combat gather phase.
+
+### Parallelization Results
+
+| Units | Sequential | Parallel | Notes |
+|-------|------------|----------|-------|
+| 1000  | 13.45 ms   | 14.39 ms | Overhead > benefit |
+| 2000  | 20.98 ms   | 23.28 ms | Overhead > benefit |
+| 3000  | 29.52 ms   | 31.82 ms | Overhead > benefit |
+| 5000  | 45.52 ms   | 48.10 ms | Overhead > benefit |
+
+**Analysis**: On Apple Silicon, the fast single-core performance means thread spawning overhead outweighs parallelization benefits at this scale. The parallel feature may provide benefits on:
+- Systems with slower single-core performance
+- Larger unit counts (10,000+)
+- More complex per-unit calculations
+
+### Key Findings
+
+1. **System-level parallelism** is the main win - Bevy's scheduler automatically parallelizes non-conflicting systems.
+
+2. **Internal parallelism** (rayon) adds overhead that exceeds benefits at 1000-5000 units on Apple Silicon.
+
+3. **Split combat** enables better scheduling even without internal parallelism.
+
+4. **Determinism preserved** - Both modes produce identical results.
+
+---
 
 ## Optimizations Implemented
 

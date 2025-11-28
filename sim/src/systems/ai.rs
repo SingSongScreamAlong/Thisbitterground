@@ -7,6 +7,21 @@
 //! - Uses spatial grid for efficient neighbor queries
 //! - Respects LOD scheduling (low-LOD units update less frequently)
 //! - Skips idle units where appropriate
+//!
+//! ## Complexity Analysis
+//!
+//! | System | Complexity | Parallelizable |
+//! |--------|------------|----------------|
+//! | `threat_awareness_system` | O(n × k) | YES - writes only ThreatAwareness |
+//! | `nearby_friendlies_system` | O(n × k) | YES - writes only NearbyFriendlies |
+//! | `flocking_system` | O(n × k) | YES - writes only Velocity |
+//! | `behavior_state_system` | O(n) | YES - writes only BehaviorState |
+//! | `ai_order_system` | O(n) | YES - writes only Order |
+//!
+//! Where n = AI units, k = avg neighbors per spatial query.
+//!
+//! All AI systems write to different components, so they can run in parallel
+//! with each other as long as they run after the spatial grid is updated.
 
 use crate::components::*;
 use crate::spatial::SpatialGrid;
@@ -21,9 +36,15 @@ use bevy_ecs::prelude::*;
 /// System that updates threat awareness for AI-controlled squads.
 /// Uses spatial grid for efficient enemy detection.
 /// 
+/// ## Complexity: O(n × k) where n = AI units, k = avg enemies per query
+/// 
 /// ## Data Access
 /// - Reads: DeltaTime, SpatialGrid, SimTick, Position, Faction, SquadStats, SimLod
-/// - Writes: ThreatAwareness
+/// - Writes: ThreatAwareness (ONLY)
+/// 
+/// ## Parallelization
+/// This system can run in parallel with `nearby_friendlies_system` because
+/// they write to different components.
 pub fn threat_awareness_system(
     dt: Res<DeltaTime>,
     grid: Res<SpatialGrid>,

@@ -4,34 +4,84 @@
 //!
 //! ## System Parallelism
 //! 
-//! Systems are organized into groups that can run in parallel:
+//! Systems are organized into groups that can run in parallel.
+//! Within each group, systems can potentially run concurrently if their
+//! data access patterns don't conflict.
 //! 
-//! **Group 1 (Spatial/LOD)** - Run first, update spatial data:
-//! - `spatial_grid_update_system` - Rebuilds spatial grid
-//! - `lod_assignment_system` - Assigns LOD based on distance
-//! - `sector_assignment_system` - Assigns combat sectors
-//! - `activity_flags_system` - Updates activity flags
+//! ### Group 1: Spatial/LOD (Run First)
 //! 
-//! **Group 2 (AI)** - Can run in parallel, read spatial grid:
-//! - `threat_awareness_system` - Detects enemies (reads SpatialGrid)
-//! - `nearby_friendlies_system` - Finds friendlies (reads SpatialGrid)
-//! - `behavior_state_system` - Updates AI state
+//! These systems update spatial data structures used by later systems.
+//! They can run in parallel with each other.
 //! 
-//! **Group 3 (AI Orders)** - Depends on Group 2:
-//! - `ai_order_system` - Generates orders from AI state
-//! - `flocking_system` - Applies flocking behavior
+//! | System | Reads | Writes |
+//! |--------|-------|--------|
+//! | `spatial_grid_update_system` | Position, Faction, Health | SpatialGrid |
+//! | `lod_assignment_system` | Position, SimConfig | SimLod |
+//! | `sector_assignment_system` | Position, SimConfig | SectorId |
+//! | `activity_flags_system` | Velocity, Suppression, SimTick | ActivityFlags |
 //! 
-//! **Group 4 (Core Simulation)** - Main game logic:
-//! - `order_system` - Processes orders into velocity
-//! - `movement_system` - Applies velocity to position
-//! - `combat_system` - Handles firing and damage
-//! - `suppression_decay_system` - Decays suppression over time
-//! - `morale_system` - Updates morale
-//! - `rout_system` - Handles broken units
+//! **Parallelization potential**: HIGH - No conflicting writes.
 //! 
-//! **Group 5 (Environment)** - Terrain and destructibles:
-//! - `terrain_damage_to_destructibles_system`
-//! - `destruction_state_system`
+//! ### Group 2: AI Awareness (After Group 1)
+//! 
+//! These systems detect threats and nearby units. They read the spatial grid.
+//! 
+//! | System | Reads | Writes |
+//! |--------|-------|--------|
+//! | `threat_awareness_system` | SpatialGrid, Position, Faction, SquadStats, SimLod | ThreatAwareness |
+//! | `nearby_friendlies_system` | SpatialGrid, Position, Faction, FlockingWeights | NearbyFriendlies |
+//! | `behavior_state_system` | ThreatAwareness, Suppression, Morale, Order | BehaviorState |
+//! 
+//! **Parallelization potential**: MEDIUM - `behavior_state_system` depends on `threat_awareness_system`.
+//! 
+//! ### Group 3: AI Decisions (After Group 2)
+//! 
+//! These systems generate movement decisions based on AI state.
+//! 
+//! | System | Reads | Writes |
+//! |--------|-------|--------|
+//! | `ai_order_system` | BehaviorState, ThreatAwareness, Position | Order |
+//! | `flocking_system` | NearbyFriendlies, ThreatAwareness, Position, FlockingWeights | Velocity |
+//! 
+//! **Parallelization potential**: HIGH - Different write targets.
+//! 
+//! ### Group 4: Core Simulation (After Group 3)
+//! 
+//! Main game logic. Currently chained for correctness, but some could run in parallel.
+//! 
+//! | System | Reads | Writes | Notes |
+//! |--------|-------|--------|-------|
+//! | `order_system` | Order, SquadStats | Velocity | |
+//! | `movement_system` | Velocity, Suppression, Morale, TerrainResource | Position | |
+//! | `combat_system` | SpatialGrid, Position, Faction, SquadStats, SimLod, Morale | Health, Suppression, ActivityFlags | HEAVIEST |
+//! | `suppression_decay_system` | DeltaTime | Suppression | |
+//! | `morale_system` | Suppression, NearbyFriendlies | Morale | |
+//! | `rout_system` | Morale | Velocity, Order | |
+//! 
+//! **Parallelization potential**: LOW - Sequential dependencies.
+//! **Optimization target**: `combat_system` is the heaviest, consider `par_iter`.
+//! 
+//! ### Group 5: Environment (After Group 4)
+//! 
+//! Terrain and destructible updates.
+//! 
+//! | System | Reads | Writes |
+//! |--------|-------|--------|
+//! | `terrain_damage_to_destructibles_system` | TerrainDamageEvent | DestructibleHealth |
+//! | `destruction_state_system` | DestructibleHealth | DestructibleState |
+//! 
+//! **Parallelization potential**: HIGH - Different entity types.
+//! 
+//! ## Next Steps for Parallelization
+//! 
+//! 1. **Intra-system parallelism**: Use `par_iter()` in `combat_system` for the
+//!    attacker loop (collect phase only, apply phase must be sequential).
+//! 
+//! 2. **Group-level parallelism**: Groups 1, 2, and 5 have high potential for
+//!    running systems in parallel within the group.
+//! 
+//! 3. **Profile first**: Use the `Profiler` utility to identify which systems
+//!    are actually the bottleneck before optimizing.
 
 pub mod ai;
 pub mod combat;

@@ -5,12 +5,14 @@
 
 pub mod api;
 pub mod components;
+pub mod profiler;
 pub mod spatial;
 pub mod systems;
 pub mod terrain;
 pub mod world;
 
 pub use components::*;
+pub use profiler::{Profiler, StressProfiler, SectionStats};
 pub use spatial::{SpatialGrid, SpatialEntry};
 pub use systems::*;
 pub use terrain::{TerrainGrid, TerrainCell, TerrainType, TerrainSnapshot, Crater, TerrainResource};

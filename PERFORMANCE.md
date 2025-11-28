@@ -4,28 +4,50 @@ This document records the performance improvements made to the ThisBitterGround-
 
 ## Benchmark Environment
 
-- **Hardware**: Apple Silicon Mac
+- **Hardware**: Apple Silicon Mac (ARM64)
 - **Rust Version**: stable
 - **Build Profile**: Release (`--release`)
 - **Test Configuration**: 20 Hz fixed timestep
 
 ## Results Summary
 
-### Before Optimization (Phase 7A - Spatial Grid Only)
+### Current Performance (Scaling Pass - Nov 28, 2025)
 
-| Units | ms/tick | Effective FPS |
-|-------|---------|---------------|
-| 1000  | ~21 ms  | ~47 FPS       |
-| 2000  | ~39 ms  | ~25 FPS       |
+| Units | Ticks | Total Time | ms/tick | Effective FPS | 20 Hz Budget | 30 Hz Budget |
+|-------|-------|------------|---------|---------------|--------------|--------------|
+| 1000  | 100   | 1.345s     | **13.45 ms** | ~74 FPS  | ✅ 36.5ms headroom | ✅ 19.5ms headroom |
+| 2000  | 50    | 1.049s     | **20.98 ms** | ~48 FPS  | ✅ 29.0ms headroom | ✅ 12.0ms headroom |
+| 3000  | 50    | 1.477s     | **29.52 ms** | ~34 FPS  | ✅ 20.5ms headroom | ✅ 3.5ms headroom |
+| 5000  | 50    | 2.276s     | **45.52 ms** | ~22 FPS  | ✅ 4.5ms headroom  | ❌ 12.5ms over |
 
-### After Optimization (Performance Pass)
+### Profiled Statistics (3000 units)
 
-*Verified benchmark run: Nov 28, 2025*
+```
+Per-tick statistics:
+  Min:       12.19ms
+  Avg:       29.64ms
+  Median:    24.38ms
+  P95:       67.35ms
+  P99:       72.46ms
+  Max:       72.46ms
 
-| Units | ms/tick | Effective FPS | Improvement |
-|-------|---------|---------------|-------------|
-| 1000  | **11.59 ms** | ~86 FPS  | **1.8x**    |
-| 2000  | **18.26 ms** | ~55 FPS  | **2.1x**    |
+Effective FPS: 33.7
+```
+
+### Scaling Analysis
+
+- **3000 units @ 20 Hz**: ✅ Comfortable (20ms headroom)
+- **3000 units @ 30 Hz**: ✅ Marginal (3.5ms headroom)
+- **5000 units @ 20 Hz**: ✅ Achievable (4.5ms headroom)
+- **5000 units @ 30 Hz**: ❌ Needs optimization (12.5ms over budget)
+
+### Historical Comparison
+
+| Phase | 1000 units | 2000 units | Notes |
+|-------|------------|------------|-------|
+| 7A (Spatial Grid) | ~21 ms | ~39 ms | Baseline |
+| 7B (LOD/Sectors)  | ~12 ms | ~18 ms | 1.8-2.1x improvement |
+| Scaling Pass      | ~13 ms | ~21 ms | Consistent with 7B |
 
 ## Optimizations Implemented
 

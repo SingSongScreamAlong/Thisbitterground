@@ -65,10 +65,18 @@ impl SimWorld {
         world.insert_resource(SectorCombatData::default());
 
         // Build schedule with parallel system groups
+        // See sim/src/systems/mod.rs for detailed data access documentation
         let mut schedule = Schedule::default();
         
-        // Group 1: Spatial/LOD systems (must run first, can run in parallel with each other)
-        // These update spatial data structures used by later systems
+        // =========================================================================
+        // GROUP 1: Spatial/LOD (Run First)
+        // =========================================================================
+        // These update spatial data structures used by later systems.
+        // PARALLEL POTENTIAL: HIGH - No conflicting writes between systems.
+        // - spatial_grid_update_system: writes SpatialGrid
+        // - lod_assignment_system: writes SimLod
+        // - sector_assignment_system: writes SectorId  
+        // - activity_flags_system: writes ActivityFlags
         schedule.add_systems((
             spatial_grid_update_system,
             lod_assignment_system,
@@ -76,31 +84,50 @@ impl SimWorld {
             activity_flags_system,
         ));
         
-        // Group 2: AI awareness systems (read spatial grid, can run in parallel)
-        // These detect threats and nearby friendlies
+        // =========================================================================
+        // GROUP 2: AI Awareness (After Group 1)
+        // =========================================================================
+        // These detect threats and nearby friendlies using the spatial grid.
+        // PARALLEL POTENTIAL: MEDIUM - behavior_state depends on threat_awareness
+        // - threat_awareness_system: writes ThreatAwareness
+        // - nearby_friendlies_system: writes NearbyFriendlies
+        // - behavior_state_system: writes BehaviorState (depends on ThreatAwareness)
         schedule.add_systems((
             threat_awareness_system,
             nearby_friendlies_system,
             behavior_state_system,
         ).after(spatial_grid_update_system));
         
-        // Group 3: AI decision systems (depend on awareness)
+        // =========================================================================
+        // GROUP 3: AI Decisions (After Group 2)
+        // =========================================================================
+        // Generate movement decisions based on AI state.
+        // PARALLEL POTENTIAL: HIGH - Different write targets (Order vs Velocity)
         schedule.add_systems((
             ai_order_system,
             flocking_system,
         ).after(behavior_state_system));
         
-        // Group 4: Core simulation (main game logic, sequential for correctness)
+        // =========================================================================
+        // GROUP 4: Core Simulation (After Group 3)
+        // =========================================================================
+        // Main game logic. Chained for correctness.
+        // PARALLEL POTENTIAL: LOW - Sequential dependencies
+        // OPTIMIZATION TARGET: combat_system is heaviest, consider par_iter
         schedule.add_systems((
             order_system,
             movement_system,
-            combat_system,
+            combat_system,        // HEAVIEST SYSTEM - target for par_iter optimization
             suppression_decay_system,
             morale_system,
             rout_system,
         ).chain().after(flocking_system));
         
-        // Group 5: Environment systems
+        // =========================================================================
+        // GROUP 5: Environment (After Group 4)
+        // =========================================================================
+        // Terrain and destructible updates.
+        // PARALLEL POTENTIAL: HIGH - Different entity types
         schedule.add_systems((
             terrain_damage_to_destructibles_system,
             destruction_state_system,
@@ -236,6 +263,32 @@ impl SimWorld {
         
         self.tick += 1;
         self.time += dt;
+    }
+
+    /// Step with profiling - returns the time taken for the fixed update.
+    /// 
+    /// This is useful for stress tests to measure per-tick performance.
+    #[cfg(any(test, feature = "profile"))]
+    pub fn step_profiled(&mut self, dt: f32) -> std::time::Duration {
+        use std::time::Instant;
+        
+        let fixed_dt = self.world
+            .get_resource::<SimConfig>()
+            .map(|c| c.fixed_timestep)
+            .unwrap_or(1.0 / 30.0);
+
+        self.time_accumulator += dt;
+        let mut total_duration = std::time::Duration::ZERO;
+
+        while self.time_accumulator >= fixed_dt {
+            let start = Instant::now();
+            self.fixed_update(fixed_dt);
+            total_duration += start.elapsed();
+            self.time_accumulator -= fixed_dt;
+        }
+
+        self.terrain.update(dt);
+        total_duration
     }
 
     /// Get a snapshot of the current simulation state.
@@ -668,5 +721,157 @@ mod tests {
         
         // Should complete (may be slower, just verify it works)
         assert!(elapsed.as_secs() < 60, "Simulation too slow: {:?}", elapsed);
+    }
+
+    #[test]
+    fn test_stress_3000_units() {
+        use std::time::Instant;
+        
+        // Use 20 Hz timestep for stress test
+        let config = SimConfig {
+            fixed_timestep: 1.0 / 20.0, // 20 Hz
+            ..Default::default()
+        };
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn 1500 Blue squads
+        sim.spawn_mass_squads(Faction::Blue, -250.0, 0.0, 1500, 400.0, 0);
+        
+        // Spawn 1500 Red squads
+        sim.spawn_mass_squads(Faction::Red, 250.0, 0.0, 1500, 400.0, 20000);
+        
+        assert_eq!(sim.snapshot().squads.len(), 3000);
+        
+        // Benchmark: run for 2.5 seconds of game time (50 ticks at 20 Hz)
+        let start = Instant::now();
+        let game_time = 2.5;
+        let frame_dt = 0.05;
+        let frames = (game_time / frame_dt) as usize;
+        
+        for _ in 0..frames {
+            sim.step(frame_dt);
+        }
+        let elapsed = start.elapsed();
+        
+        let ticks = sim.current_tick();
+        println!("3000 units, {} ticks in {:?} ({:.2} ms/tick)", ticks, elapsed, elapsed.as_millis() as f64 / ticks as f64);
+        
+        // Should complete in reasonable time (< 120 seconds)
+        assert!(elapsed.as_secs() < 120, "Simulation too slow: {:?}", elapsed);
+    }
+
+    #[test]
+    fn test_stress_5000_units() {
+        use std::time::Instant;
+        
+        // Use 20 Hz timestep for stress test
+        let config = SimConfig {
+            fixed_timestep: 1.0 / 20.0, // 20 Hz
+            ..Default::default()
+        };
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn 2500 Blue squads
+        sim.spawn_mass_squads(Faction::Blue, -300.0, 0.0, 2500, 500.0, 0);
+        
+        // Spawn 2500 Red squads
+        sim.spawn_mass_squads(Faction::Red, 300.0, 0.0, 2500, 500.0, 30000);
+        
+        assert_eq!(sim.snapshot().squads.len(), 5000);
+        
+        // Benchmark: run for 2.5 seconds of game time (50 ticks at 20 Hz)
+        let start = Instant::now();
+        let game_time = 2.5;
+        let frame_dt = 0.05;
+        let frames = (game_time / frame_dt) as usize;
+        
+        for _ in 0..frames {
+            sim.step(frame_dt);
+        }
+        let elapsed = start.elapsed();
+        
+        let ticks = sim.current_tick();
+        println!("5000 units, {} ticks in {:?} ({:.2} ms/tick)", ticks, elapsed, elapsed.as_millis() as f64 / ticks as f64);
+        
+        // Should complete in reasonable time (< 120 seconds)
+        assert!(elapsed.as_secs() < 120, "Simulation too slow: {:?}", elapsed);
+    }
+
+    /// Profiled stress test that shows per-tick timing distribution.
+    /// 
+    /// Run with: `cargo test test_stress_profiled --release -- --nocapture`
+    #[test]
+    fn test_stress_profiled_3000() {
+        use std::time::{Duration, Instant};
+        
+        let config = SimConfig {
+            fixed_timestep: 1.0 / 20.0, // 20 Hz
+            ..Default::default()
+        };
+        let mut sim = SimWorld::with_config(config);
+        
+        // Spawn 1500 Blue + 1500 Red = 3000 units
+        sim.spawn_mass_squads(Faction::Blue, -250.0, 0.0, 1500, 400.0, 0);
+        sim.spawn_mass_squads(Faction::Red, 250.0, 0.0, 1500, 400.0, 20000);
+        
+        assert_eq!(sim.snapshot().squads.len(), 3000);
+        
+        // Collect per-tick timings
+        let mut tick_times: Vec<Duration> = Vec::new();
+        let game_time = 2.5;
+        let frame_dt = 0.05;
+        let frames = (game_time / frame_dt) as usize;
+        
+        let start = Instant::now();
+        for _ in 0..frames {
+            let tick_duration = sim.step_profiled(frame_dt);
+            if tick_duration > Duration::ZERO {
+                tick_times.push(tick_duration);
+            }
+        }
+        let total_elapsed = start.elapsed();
+        
+        // Calculate statistics
+        let ticks = tick_times.len();
+        if ticks > 0 {
+            tick_times.sort();
+            let total: Duration = tick_times.iter().sum();
+            let avg = total / ticks as u32;
+            let min = tick_times[0];
+            let max = tick_times[ticks - 1];
+            let median = tick_times[ticks / 2];
+            let p95 = tick_times[(ticks as f64 * 0.95) as usize];
+            let p99 = tick_times[(ticks as f64 * 0.99).min((ticks - 1) as f64) as usize];
+            
+            println!("\n=== Profiled Stress Test: 3000 units ===");
+            println!("Total ticks: {}", ticks);
+            println!("Total time:  {:?}", total_elapsed);
+            println!();
+            println!("Per-tick statistics:");
+            println!("  Min:    {:>10.2?}", min);
+            println!("  Avg:    {:>10.2?} ({:.2} ms)", avg, avg.as_secs_f64() * 1000.0);
+            println!("  Median: {:>10.2?}", median);
+            println!("  P95:    {:>10.2?}", p95);
+            println!("  P99:    {:>10.2?}", p99);
+            println!("  Max:    {:>10.2?}", max);
+            println!();
+            
+            let effective_fps = 1.0 / avg.as_secs_f64();
+            println!("Effective FPS: {:.1}", effective_fps);
+            
+            // Target: 20 Hz = 50ms budget, we want to be well under
+            let budget_20hz = Duration::from_millis(50);
+            let budget_30hz = Duration::from_millis(33);
+            println!();
+            println!("Budget analysis:");
+            println!("  20 Hz (50ms): {} headroom", 
+                     if avg < budget_20hz { format!("{:.1}ms", (budget_20hz - avg).as_secs_f64() * 1000.0) } 
+                     else { "OVER BUDGET".to_string() });
+            println!("  30 Hz (33ms): {}", 
+                     if avg < budget_30hz { format!("{:.1}ms headroom", (budget_30hz - avg).as_secs_f64() * 1000.0) } 
+                     else { format!("{:.1}ms over", (avg - budget_30hz).as_secs_f64() * 1000.0) });
+        }
+        
+        assert!(total_elapsed.as_secs() < 120, "Simulation too slow: {:?}", total_elapsed);
     }
 }

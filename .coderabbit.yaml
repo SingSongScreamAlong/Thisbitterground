@@ -1,0 +1,94 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+
+language: "en-US"
+
+# Review settings
+reviews:
+  # Enable automatic reviews on PRs
+  auto_review:
+    enabled: true
+    # Review drafts as well
+    drafts: false
+    # Base branches to review PRs against
+    base_branches:
+      - main
+  
+  # Review profile: "chill" | "assertive" | "passionate"
+  profile: "assertive"
+  
+  # Request changes when issues are found
+  request_changes_workflow: true
+  
+  # High-level summary in PR comments
+  high_level_summary: true
+  
+  # Generate poem in review (fun feature)
+  poem: false
+  
+  # Review scope
+  review_status: true
+  collapse_walkthrough: false
+  
+  # Path-based instructions for reviewers
+  path_instructions:
+    - path: "sim/**/*.rs"
+      instructions: |
+        This is the core Rust ECS simulation crate using Bevy ECS.
+        Focus on:
+        - Performance (this runs at 30Hz with 3000+ units)
+        - Memory safety and ownership
+        - ECS patterns and system ordering
+        - Fixed-timestep simulation correctness
+        
+    - path: "gdext/**/*.rs"
+      instructions: |
+        This is the GDExtension bridge exposing Rust to Godot 4.
+        Focus on:
+        - FFI safety and stability
+        - Godot-rust/gdext API usage
+        - Type conversions between Rust and Godot types
+        - Snapshot buffer format stability (SQUAD_STRIDE = 14)
+        
+    - path: "godot/**/*.gd"
+      instructions: |
+        This is GDScript code for the Godot 4 frontend.
+        Focus on:
+        - GDScript 4 best practices
+        - Input handling and UI patterns
+        - Efficient buffer parsing from Rust
+        - Camera and rendering logic
+        
+    - path: "godot/**/*.tscn"
+      instructions: |
+        These are Godot scene files.
+        Check for:
+        - Proper node hierarchy
+        - Script attachments
+        - UI layout and anchoring
+
+# Chat settings (for @coderabbitai mentions)
+chat:
+  auto_reply: true
+
+# Knowledge base (learns from your codebase)
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: "auto"
+
+# Early access features
+early_access: false
+
+# Tone and style
+tone_instructions: |
+  Be direct and technical. This is a game simulation project with 
+  performance-critical Rust code and a Godot 4 frontend. Prioritize:
+  1. Correctness and safety
+  2. Performance implications
+  3. Code clarity and maintainability
+  
+  The codebase uses:
+  - Bevy ECS for the simulation
+  - godot-rust/gdext for GDExtension
+  - Flat buffer format for efficient Rust->Godot data transfer
